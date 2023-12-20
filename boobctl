@@ -1,0 +1,77 @@
+#!/bin/bash
+
+check_dep() {
+	local dep="$1"
+	[[ -x "$(command -v "$dep")" ]] && return
+
+	echo "Error: missing dependency $dep"
+	exit 1
+}
+
+get_cfg_path() {
+	echo "${KUBECONFIG:-$HOME/.kube/config}"
+}
+
+get_current_context() {
+	yq -r '.["current-context"]' "$(get_cfg_path)"
+}
+
+get_current_user() {
+	# this is wrong but works on my machine
+	get_current_context
+}
+
+get_current_cluster() {
+	# probably wrong but same on my machine
+	get_current_context
+}
+
+get_token() {
+	yq -r ".users[] | select(.name==\"$(get_current_user)\") | .user.token" "$(get_cfg_path)"
+}
+
+get_server_url() {
+	yq -r ".clusters[] | select(.name==\"$(get_current_cluster)\") | .cluster.server" "$(get_cfg_path)"
+}
+
+http_api() {
+	local path="$1"
+	curl \
+		--silent \
+		-H "Authorization: Bearer $(get_token)" \
+		"$(get_server_url)/api/v1/$path"
+}
+
+get_resource_pods() {
+	http_api pods | jq -r '.items[] | .metadata.name'
+}
+
+parse_args() {
+	local arg
+	while true
+	do
+		[[ "$#" -gt 0 ]] || break
+		arg="$1"
+		shift
+
+		if [ "$arg" == "get" ]
+		then
+			local resource="$1"
+			shift
+			local func="get_resource_$resource"
+			if ! type -t "$func" >/dev/null
+			then
+				echo "Error: get $resource not supported yet"
+				exit 1
+			fi
+			"$func"
+		else
+			echo "Error: only get supported"
+		fi
+	done
+}
+
+check_dep yq
+check_dep curl
+parse_args "$@"
+
